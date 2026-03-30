@@ -1,36 +1,67 @@
 """
 Camera Capture Tool for Windows
 Uses OpenCV to capture photos from available cameras
+
+Tested cameras:
+- Integrated IR Camera (1280x720 works)
+- Integrated Camera (640x480 works)
+- LRCP H-720P (not accessible via OpenCV)
 """
 import cv2
 import os
 import sys
 from datetime import datetime
 
-def list_cameras(max_check=5):
-    """Check available cameras"""
+def list_cameras(max_check=10):
+    """Check available cameras with both DSHOW and MSMF backends"""
     available = []
-    for i in range(max_check):
-        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-        if cap is None or not cap.isOpened():
-            cap.release()
-            continue
-        ret, frame = cap.read()
-        if ret:
-            available.append(i)
-            print(f"  Camera {i}: OK")
-        cap.release()
+    backends = [
+        ('MSMF', cv2.CAP_MSMF),
+        ('DSHOW', cv2.CAP_DSHOW),
+    ]
+    
+    for backend_name, backend in backends:
+        for i in range(max_check):
+            cap = cv2.VideoCapture(i, backend)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    brightness = 0
+                    if frame is not None and frame.size > 0:
+                        import numpy as np
+                        brightness = np.mean(frame)
+                    available.append({
+                        'index': i,
+                        'backend': backend_name,
+                        'brightness': brightness,
+                        'shape': frame.shape if frame is not None else None
+                    })
+                    print(f"  Camera {i} ({backend_name}): brightness={brightness:.1f}, shape={frame.shape}")
+                cap.release()
     return available
 
-def capture_photo(camera_idx=0, output_dir=None):
-    """Capture a photo from specified camera"""
+def capture_photo(camera_idx=0, output_dir=None, resolution=(1280, 720)):
+    """Capture a photo from specified camera with specified resolution"""
     if output_dir is None:
         output_dir = os.path.dirname(os.path.abspath(__file__))
     
-    cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW)
+    # Try MSMF backend first (better for Windows)
+    cap = cv2.VideoCapture(camera_idx, cv2.CAP_MSMF)
+    if not cap.isOpened():
+        # Fall back to DSHOW
+        cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW)
+    
     if not cap.isOpened():
         print(f"Error: Cannot open camera {camera_idx}")
         return None
+    
+    # Set resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, resolution[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resolution[1])
+    
+    actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    print(f"Camera resolution: {actual_width}x{actual_height}")
     
     ret, frame = cap.read()
     cap.release()
@@ -61,9 +92,10 @@ def main():
     
     print(f"\nFound {len(cameras)} camera(s)")
     
-    # Capture from first available camera
-    print(f"\nCapturing from camera {cameras[0]}...")
-    result = capture_photo(cameras[0])
+    # Use the first available camera
+    camera = cameras[0]
+    print(f"\nCapturing from camera {camera['index']} ({camera['backend']})...")
+    result = capture_photo(camera['index'])
     
     if result:
         print(f"\nSuccess! Photo saved to:\n  {result}")
